@@ -23,7 +23,6 @@ class InteractiveChatTester:
     def __init__(self, user_id: int = 1, model: str = "gpt-4o"):
         self.user_id = user_id
         self.model = model
-        self.conversation_history = []
         self.message_count = 0
 
     async def initialize(self):
@@ -85,14 +84,12 @@ class InteractiveChatTester:
                 agent=chatbot_agent,
                 user_id=self.user_id,
                 user_message=user_message,
-                history=self.conversation_history,
+                history=None,  # Use UserHistoryManager (auto-managed)
                 model=self.model,
                 mode="chat"
             )
 
-            # Update conversation history
-            self.conversation_history.append(("User", user_message))
-            self.conversation_history.append(("Assistant", response))
+            # Note: History is auto-managed by UserHistoryManager in run_agent()
 
             # Save to database
             await save_conversation_message_async(
@@ -167,9 +164,14 @@ class InteractiveChatTester:
 
         print("=" * 60)
 
-    def clear_history(self):
+    async def clear_history(self):
         """Clear conversation history"""
-        self.conversation_history = []
+        from agents.agents_backend import history_manager
+
+        # Clear user's history in memory
+        if self.user_id in history_manager.users:
+            history_manager.users[self.user_id].clear()
+
         print("\n✅ 会话历史已清空")
 
     async def run(self):
@@ -195,7 +197,7 @@ class InteractiveChatTester:
                     await self.show_status()
                     continue
                 elif user_input == "/clear":
-                    self.clear_history()
+                    await self.clear_history()
                     continue
 
                 # Normal chat

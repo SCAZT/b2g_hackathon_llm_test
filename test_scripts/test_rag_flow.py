@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from agents.agents_backend import chatbot_agent, run_agent
 from agents.memory_system import memory_system
+from agents.runner import ai_service_manager
 from agents.database import (
     save_conversation_message_async,
     get_user_message_count_async
@@ -27,7 +28,6 @@ class RAGFlowTester:
     def __init__(self, user_id: int = 999, model: str = "gpt-4o"):
         self.user_id = user_id
         self.model = model
-        self.conversation_history = []
         self.test_results = []
 
     def log_result(self, test_name: str, status: str, details: str = ""):
@@ -52,13 +52,12 @@ class RAGFlowTester:
                 agent=chatbot_agent,
                 user_id=self.user_id,
                 user_message=message,
-                history=self.conversation_history,
+                history=None,  # Use UserHistoryManager (auto-managed)
                 model=self.model,
                 mode="chat"
             )
 
-            self.conversation_history.append(("User", message))
-            self.conversation_history.append(("Assistant", response))
+            # Note: History is auto-managed by UserHistoryManager in run_agent()
 
             if save_to_db:
                 await save_conversation_message_async(
@@ -293,6 +292,11 @@ class RAGFlowTester:
         print(f"Model: {self.model}")
         print()
 
+        # Start Rate Limiter processors
+        print("📊 Starting Rate Limiter processors...")
+        await ai_service_manager.start()
+        print("✅ Rate Limiters started\n")
+
         try:
             # Run tests sequentially
             await self.test_system_health()
@@ -307,6 +311,12 @@ class RAGFlowTester:
             print(f"\n❌ 测试执行错误: {e}")
             import traceback
             traceback.print_exc()
+
+        finally:
+            # Stop Rate Limiter processors
+            print("\n🛑 Stopping Rate Limiter processors...")
+            await ai_service_manager.stop()
+            print("✅ Shutdown complete")
 
 
 async def main():

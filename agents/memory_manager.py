@@ -594,75 +594,16 @@ class MemoryManager:
             return True, ["round_completed"]
         return False, []
     
-    async def _check_chat_trigger(self, user_id: int, message_count: int = 0, 
-                                 inactivity_detected: bool = False, 
+    async def _check_chat_trigger(self, user_id: int, message_count: int = 0,
+                                 inactivity_detected: bool = False,
                                  inactivity_duration: int = 0) -> Tuple[bool, List[str]]:
-        """Check chat phase memory triggers with database-based inactivity detection"""
-        triggers = []
-        
-        # Trigger 1: Message count threshold
+        """Check chat phase memory triggers - simplified to message count only"""
+        # Only check message count trigger (every 3 messages)
         if message_count > 0 and message_count % self.chat_message_threshold == 0:
-            triggers.append("message_count")
-        
-        # Trigger 2: Database-based inactivity check
-        if inactivity_detected:
-            should_create_memory = await self._should_create_inactivity_memory_db(
-                user_id, inactivity_duration
-            )
-            if should_create_memory:
-                if inactivity_duration >= self.long_inactivity_threshold:
-                    triggers.append("long_inactivity")  # 30+ minutes
-                else:
-                    triggers.append("medium_inactivity")  # 15+ minutes
-        
-        return len(triggers) > 0, triggers
-    
-    async def _should_create_inactivity_memory_db(self, user_id: int, inactivity_duration: int) -> bool:
-        """Database-based logic to determine if inactivity memory should be created"""
-        try:
-            # Get the latest conversation_chunk memory for this user
-            latest_memory = self.get_latest_memory(user_id, memory_type="conversation_chunk")
-            
-            # Get last conversation time to avoid creating memory for old inactivity
-            latest_conversation = self.get_latest_conversation(user_id)
-            if not latest_conversation:
-                logger.info(f"No conversations found for user {user_id}, skipping inactivity memory")
-                return False
-            
-            last_conversation_time = latest_conversation['timestamp']
-            
-            # If no memory exists, create one if we have enough conversation and recent activity
-            if not latest_memory:
-                conversation_count = self.count_conversations_since(user_id, datetime.min)
-                return conversation_count >= self.min_conversation_length
-            
-            # Get time of last memory creation
-            last_memory_time = latest_memory['created_at']
-            
-            # Count new conversations since last memory
-            new_conversation_count = self.count_conversations_since(user_id, last_memory_time)
-            
-            # Check if the user was active after the last memory was created
-            if last_conversation_time <= last_memory_time:
-                logger.info(f"No new conversations since last memory for user {user_id}, skipping inactivity memory")
-                return False
-            
-            # Apply inactivity duration rules
-            if inactivity_duration >= self.long_inactivity_threshold:
-                # 30+ minutes: create memory if any new conversations
-                return new_conversation_count > 0
-            elif inactivity_duration >= self.medium_inactivity_threshold:
-                # 15+ minutes: create memory if at least 2 new conversations
-                return new_conversation_count >= 2
-            else:
-                # Less than 15 minutes: don't create inactivity memory
-                return False
-            
-        except Exception as e:
-            logger.error(f"Error in database-based inactivity memory decision for user {user_id}: {e}")
-            # In case of error, be conservative and don't create memory
-            return False
-    
+            return (True, ["message_count"])
+
+        return (False, [])
+
     def get_evaluation_data_by_user(self, user_id: int, limit: int = 10) -> List[Dict]:
         """Retrieve recent evaluation data for a user from idea_evaluation table"""
         try:
@@ -700,7 +641,7 @@ class MemoryManager:
         
         return "\n".join(formatted)
     
-    async def create_memory_from_conversations(self, user_id: int, memory_type: str, 
+    async def create_memory_from_conversations(self, user_id: int, memory_type: str,
                                               conversation_ids: Optional[List[int]] = None,
                                               agent_type: Optional[int] = None) -> Optional[int]:
         """Create memory from recent conversations"""
@@ -709,7 +650,7 @@ class MemoryManager:
             if conversation_ids:
                 conversations = self.get_conversations_by_ids(conversation_ids)
             else:
-                conversations = self.get_conversations_by_user(user_id, limit=20)
+                conversations = self.get_conversations_by_user(user_id, limit=10)
             
             if not conversations:
                 logger.warning(f"No conversations found for user {user_id}")

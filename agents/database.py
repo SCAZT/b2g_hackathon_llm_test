@@ -186,17 +186,18 @@ class DatabaseManager:
             return None
 
     def get_user_conversations(self, user_id: int, limit: int = 50) -> List[Dict]:
-        """Get user's conversation history from database"""
+        """Get user's conversation history from database (newest first)"""
         try:
             conversations = self.db.query(Conversation).filter(
                 Conversation.user_id == user_id
-            ).order_by(Conversation.timestamp.asc()).limit(limit).all()
+            ).order_by(Conversation.timestamp.desc()).limit(limit).all()
 
             return [
                 {
                     "conversation_id": conv.conversation_id,
                     "content": conv.content,
                     "message_type": conv.message_type,
+                    "role": conv.role,
                     "timestamp": conv.timestamp,
                 }
                 for conv in conversations

@@ -2,6 +2,12 @@
 
 本测试环境用于验证 Chatbot Agent 与 RAG 记忆系统的完整功能，包括对话、记忆创建和记忆检索。
 
+**最新更新 (Phase 2)**:
+- ✅ 实现 3 轮历史限制和会话恢复
+- ✅ 简化记忆触发器（仅保留消息计数）
+- ✅ 优化 Prompt 结构和 Token 消耗
+- ✅ Three-API 架构 + Rate Limiter + Thread Pool
+
 ## 📋 目录结构
 
 ```
@@ -10,10 +16,10 @@ local_test_phase_2/
 │   ├── __init__.py
 │   ├── agent.py                  # Agent 基类
 │   ├── tools.py                  # Agent 工具
-│   ├── runner.py                 # AI Service Manager (完整版，包含5-key + 双API)
-│   ├── agents_backend.py         # Chatbot Agent 定义 (精简版，仅Chatbot)
+│   ├── runner.py                 # AI Service Manager (Three-API + Rate Limiter + Thread Pool)
+│   ├── agents_backend.py         # Chatbot + UserHistoryManager (3轮历史限制)
 │   ├── memory_system.py          # 记忆系统包装
-│   ├── memory_manager.py         # 记忆管理核心
+│   ├── memory_manager.py         # 记忆管理核心（简化触发器）
 │   └── database.py               # 数据库操作 (精简版，仅Chat相关)
 │
 ├── instructions/
@@ -126,12 +132,15 @@ nano .env  # 或使用其他编辑器
 # 数据库连接
 DATABASE_URL=postgresql://postgres:your_password@localhost:5432/hackathon_test
 
-# OpenAI API Keys (5个key，来自同一账户)
-OPENAI_API_KEY_1=sk-proj-...
-OPENAI_API_KEY_2=sk-proj-...
-OPENAI_API_KEY_3=sk-proj-...
-OPENAI_API_KEY_4=sk-proj-...
-OPENAI_API_KEY_5=sk-proj-...
+# Three-API 系统（3个不同账户的API密钥）
+# Chat 主 API（账户 A，高容量）- 承担 83.3% chat 调用
+MAIN_API_KEY=sk-proj-account_a_...
+
+# Chat 备用 API（账户 B，中容量）- 承担 16.7% chat 调用
+BACKUP_API_KEY=sk-proj-account_b_...
+
+# Memory 专用 API（账户 C，独立）- 承担 100% memory 调用
+MEMORY_API_KEY=sk-proj-account_c_...
 ```
 
 ## 🧪 运行测试
@@ -271,30 +280,78 @@ asyncio.run(check_memories())
 
 ## 📊 架构说明
 
-### API Keys 分配策略 (5-key 系统)
+### API Keys 分配策略 (Three-API 系统)
 
-当前测试环境使用 5-key 系统（来自同一账户）:
+当前测试环境使用 Three-API 系统（来自 3 个不同账户）:
 
-| Key | 用途 | 优先级 |
-|-----|------|-------|
-| Key 1 | Chat | 高 |
-| Key 2 | Chat + Memory (共享) | 高 |
-| Key 3 | Chat + Memory (共享) | 高 |
-| Key 4 | Memory + Chat (共享) | 高 |
-| Key 5 | Memory | 高 |
+| API | 用途 | 账户 | 分配比例 |
+|-----|------|------|---------|
+| MAIN_API | Chat 主力 | A | 83.3% (5:1 中的 "5") |
+| BACKUP_API | Chat 备用 | B | 16.7% (5:1 中的 "1") |
+| MEMORY_API | Memory 专用 | C | 100% memory 调用 |
 
 **调用模式**:
-- **Chatbot 对话**: 优先使用 Key 1-3，回退到 Key 2-4
-- **记忆 Embedding**: 优先使用 Key 4-5，回退到 Key 2-4
-- **记忆提取**: 优先使用 Key 4-5，回退到 Key 2-4
+- **Chatbot 对话**: MAIN_API 和 BACKUP_API 按 5:1 轮询分配
+  - Request 1-5, 7-11, 13-17... → MAIN_API
+  - Request 6, 12, 18... → BACKUP_API
+- **记忆 Embedding**: 100% 使用 MEMORY_API
+- **记忆内容提取**: 100% 使用 MEMORY_API
+
+**Rate Limiter 配置**:
+- **Chat Rate Limiter**: 250 RPM (每 0.24 秒释放 1 个请求)
+- **Memory Rate Limiter**: 400 RPM (每 0.15 秒释放 1 个请求)
+- **Thread Pool**: 300 workers 并发执行
 
 ### 记忆触发机制
 
-| 触发条件 | 记忆类型 | 说明 |
-|---------|---------|------|
-| 每 3 条消息 | `round_summary` | 总结每轮对话的关键点 |
-| 15 分钟不活跃 + 至少2条新对话 | `conversation_chunk` | 保存会话片段 |
-| 30 分钟不活跃 + 至少1条新对话 | `conversation_chunk` | 保存会话片段 |
+| 触发条件 | 记忆类型 | 数据来源 | 说明 |
+|---------|---------|---------|------|
+| 每 3 条消息 | `round_summary` | 最近 10 条对话 | 总结每轮对话的关键点和决策 |
+
+**Phase 2 优化说明**:
+- ✅ 移除了 15 分钟和 30 分钟超时触发器
+- ✅ 理由：Conversation 表是数据源，会话恢复不依赖记忆触发
+- ✅ 简化系统，减少复杂度
+
+### 历史管理机制 (Phase 2 新增)
+
+**UserHistoryManager** - 单用户历史管理:
+- **3 轮限制**: 自动截断到最近 6 条消息（3 轮对话）
+- **会话恢复**: 首次访问时从数据库加载最近 3 轮
+- **自动管理**: 当 `history=None` 时自动使用
+- **1:1 映射**: user_id → UserHistoryManager
+
+**HistoryManager** - 全局历史管理:
+- 管理所有用户的历史记录
+- 提供统一的访问接口
+- 自动初始化和清理
+
+**优势**:
+- ✅ Token 优化：固定历史长度，避免 Token 爆炸
+- ✅ 会话恢复：服务重启后可从数据库恢复
+- ✅ 简化代码：测试脚本无需手动管理历史
+
+### Prompt 结构 (Phase 2 优化)
+
+```
+Recent conversation history:
+User: msg1
+Assistant: resp1
+User: msg2
+Assistant: resp2
+
+Previous relevant context from our conversations:
+[Memory 1: ...]
+[Memory 2: ...]
+
+User: [current message]
+Assistant:
+```
+
+**改进**:
+- ✅ 添加解释性标题（"Recent conversation history:"）
+- ✅ 明确区分历史对话、记忆上下文、当前输入
+- ✅ AI 能更清楚理解每部分内容的意图
 
 ### 记忆检索算法
 
@@ -373,12 +430,27 @@ SELECT COUNT(*) FROM conversation WHERE user_id = 1;
 
 ## 📝 后续测试计划
 
-测试完成后，可以进行以下扩展：
+### ✅ Phase 1: 功能验证（已完成）
+- [x] 运行基础测试，验证系统正常工作
+- [x] 测试记忆创建和检索功能
 
-1. **高并发测试**: 测试 Agent 在高并发下的性能
-2. **双 API 测试**: 修改调用方式，测试双 API 架构
-3. **压力测试**: 测试记忆系统在大量数据下的性能
-4. **集成测试**: 将测试通过的代码合并回主程序
+### ✅ Phase 2: 历史管理与触发器优化（已完成）
+- [x] 实现 3 轮历史限制
+- [x] 实现会话恢复机制
+- [x] 简化记忆触发器
+- [x] 优化 Prompt 结构
+- [x] 所有测试通过 (5/5 passed)
+
+### 📋 Phase 3: 性能测试（待进行）
+1. **高并发测试**: 测试 10/50/100 并发用户
+2. **压力测试**: 测试记忆系统在大量数据下的性能
+3. **Rate Limiter 测试**: 验证 250 RPM 和 400 RPM 限制
+4. **长时间运行**: 测试 24+ 小时稳定性
+
+### 📋 Phase 4: 集成测试（待进行）
+1. **合并改进**: 将测试通过的代码合并回主程序
+2. **文档更新**: 更新主程序的 CLAUDE.md
+3. **部署验证**: 在生产环境中验证
 
 ## 📚 参考文档
 
