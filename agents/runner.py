@@ -112,13 +112,25 @@ class AIServiceManager:
         self.memory_model = "gpt-4o-mini"  # Cheaper for memory extraction
         self.embedding_model = "text-embedding-3-small"
 
+        # =================== Auto-start Flag ===================
+        self._started = False
+        self._start_lock = asyncio.Lock()
+
         logger.info("🚀 AIServiceManager initialized (Three-API + Thread Pool + Dual Rate Limiter)")
 
+    async def _ensure_started(self):
+        """Ensure Rate Limiter processors are started (lazy initialization)"""
+        if not self._started:
+            async with self._start_lock:
+                if not self._started:  # Double-check after acquiring lock
+                    await self.chat_rate_limiter.start_processor()
+                    await self.memory_rate_limiter.start_processor()
+                    self._started = True
+                    logger.info("✅ Rate Limiter processors auto-started")
+
     async def start(self):
-        """Start Rate Limiter processors"""
-        await self.chat_rate_limiter.start_processor()
-        await self.memory_rate_limiter.start_processor()
-        logger.info("✅ Rate Limiter processors started")
+        """Manually start Rate Limiter processors"""
+        await self._ensure_started()
 
     async def stop(self):
         """Stop Rate Limiter processors gracefully"""
@@ -247,6 +259,9 @@ class AIServiceManager:
             str: Agent's response
         """
         try:
+            # Ensure Rate Limiter processors are started
+            await self._ensure_started()
+
             # Use default chat model if not specified
             if model is None:
                 model = self.chat_model
@@ -302,6 +317,9 @@ class AIServiceManager:
             str: Response chunks
         """
         try:
+            # Ensure Rate Limiter processors are started
+            await self._ensure_started()
+
             if model is None:
                 model = self.chat_model
 
@@ -365,6 +383,9 @@ class AIServiceManager:
             List[float]: Embedding vector (1536 dimensions)
         """
         try:
+            # Ensure Rate Limiter processors are started
+            await self._ensure_started()
+
             # Generate request ID
             request_id = f"embed_req_{int(time.time() * 1000)}"
 
