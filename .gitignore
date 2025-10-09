@@ -97,3 +97,6 @@ memory_system_notifications.log
 *.db
 *.sqlite
 *.sqlite3
+
+# Test results (large files)
+test_scripts/results/
