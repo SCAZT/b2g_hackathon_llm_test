@@ -111,10 +111,13 @@ class InteractiveChatTester:
                     self.user_id, "chat", message_count=self.message_count
                 )
                 if should_create:
-                    await memory_system.create_memory_async(
-                        self.user_id, "chat", triggers, agent_type=1
+                    # Create background task (non-blocking)
+                    asyncio.create_task(
+                        memory_system.create_memory_async(
+                            self.user_id, "chat", triggers, agent_type=1
+                        )
                     )
-                    print(f"✅ 记忆创建完成 (triggers: {triggers})")
+                    print(f"✅ 记忆创建已在后台启动 (triggers: {triggers})")
             else:
                 remaining = 3 - trigger_status
                 print(f"ℹ️  还需 {remaining} 条消息触发记忆创建")
